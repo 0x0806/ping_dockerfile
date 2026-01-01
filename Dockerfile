@@ -7,5 +7,5 @@ RUN apt-get update && \
 
 CMD while true; do \
       curl -Is https://thriiievents.com >/dev/null || echo "DOWN"; \
-      sleep 2; \
+      sleep 49; \
     done
