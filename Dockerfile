@@ -1,12 +1,11 @@
 FROM ubuntu:22.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install ping
 RUN apt-get update && \
-    apt-get install -y iputils-ping && \
+    apt-get install -y curl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Run ping nonstop
-CMD ["ping", "thriiievents.com"]
+CMD while true; do \
+      curl -Is https://thriiievents.com >/dev/null || echo "DOWN"; \
+      sleep 2; \
+    done
