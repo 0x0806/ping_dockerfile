@@ -6,6 +6,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 CMD while true; do \
-      curl -Is https://thriiievents.com >/dev/null || echo "DOWN"; \
+      curl -Is https://thriiievents.com >/dev/null || echo "thriiievents.com DOWN"; \
+      curl -Is https://www.securechat.online >/dev/null || echo "securechat.online DOWN"; \
       sleep 49; \
     done
