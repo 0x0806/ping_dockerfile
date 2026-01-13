@@ -18,11 +18,9 @@ RUN useradd -m -u 1000 appuser
 USER appuser
 WORKDIR /home/appuser
 
-# Health check to monitor container status
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -fIs https://thriiievents.com || exit 1
+# HEALTHCHECK removed - Not used by Background Workers
 
-# Create a proper script file instead of inline CMD
+# Create and run the monitoring script
 RUN echo '#!/bin/bash\n\
 while true; do\n\
     echo "Checking websites at $(date)"\n\
@@ -44,5 +42,4 @@ while true; do\n\
 done' > /home/appuser/checker.sh && \
     chmod +x /home/appuser/checker.sh
 
-# Run the monitoring script
 CMD ["/home/appuser/checker.sh"]
