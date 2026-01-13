@@ -1,12 +1,48 @@
 FROM ubuntu:22.04
 
-RUN apt-get update && \
-    apt-get install -y curl && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# Set environment variables to avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
 
-CMD while true; do \
-      curl -Is https://thriiievents.com >/dev/null || echo "thriiievents.com DOWN"; \
-      curl -Is https://www.securechat.online >/dev/null || echo "securechat.online DOWN"; \
-      sleep 49; \
-    done
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    tzdata \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user for security
+RUN useradd -m -u 1000 appuser
+USER appuser
+WORKDIR /home/appuser
+
+# Health check to monitor container status
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -fIs https://thriiievents.com || exit 1
+
+# Create a proper script file instead of inline CMD
+RUN echo '#!/bin/bash\n\
+while true; do\n\
+    echo "Checking websites at $(date)"\n\
+    \n\
+    if ! curl -Is --max-time 10 https://thriiievents.com >/dev/null 2>&1; then\n\
+        echo "[ERROR] $(date): thriiievents.com is DOWN"\n\
+    else\n\
+        echo "[OK] $(date): thriiievents.com is UP"\n\
+    fi\n\
+    \n\
+    if ! curl -Is --max-time 10 https://www.securechat.online >/dev/null 2>&1; then\n\
+        echo "[ERROR] $(date): securechat.online is DOWN"\n\
+    else\n\
+        echo "[OK] $(date): securechat.online is UP"\n\
+    fi\n\
+    \n\
+    echo "Waiting 49 seconds..."\n\
+    sleep 49\n\
+done' > /home/appuser/checker.sh && \
+    chmod +x /home/appuser/checker.sh
+
+# Run the monitoring script
+CMD ["/home/appuser/checker.sh"]
