@@ -24,10 +24,9 @@ RUN useradd -m -u 1000 appuser
 USER appuser
 WORKDIR /home/appuser
 
-# Create multiple monitoring scripts for redundancy
-
 # Script 1: Main website monitoring
-RUN echo '#!/bin/bash
+COPY <<'EOF' /home/appuser/monitor1.sh
+#!/bin/bash
 echo "=== Main Monitor Started ==="
 while true; do
     START_TIME=$(date +%s)
@@ -58,10 +57,14 @@ while true; do
     
     ELAPSED=$(( $(date +%s) - START_TIME ))
     [ $ELAPSED -lt 15 ] && sleep $((15 - ELAPSED))
-done' > /home/appuser/monitor1.sh && chmod +x /home/appuser/monitor1.sh
+done
+EOF
+
+RUN chmod +x /home/appuser/monitor1.sh
 
 # Script 2: Continuous self-pinging to keep Render alive
-RUN echo '#!/bin/bash
+COPY <<'EOF' /home/appuser/pinger.sh
+#!/bin/bash
 echo "=== Self-Pinger Started ==="
 while true; do
     # Ping our own Render URL every 30 seconds
@@ -74,10 +77,14 @@ while true; do
     
     echo "[SELF-PING] $(date): Completed"
     sleep 30
-done' > /home/appuser/pinger.sh && chmod +x /home/appuser/pinger.sh
+done
+EOF
+
+RUN chmod +x /home/appuser/pinger.sh
 
 # Script 3: Backup monitor with different timing
-RUN echo '#!/bin/bash
+COPY <<'EOF' /home/appuser/monitor2.sh
+#!/bin/bash
 echo "=== Backup Monitor Started ==="
 sleep 7  # Offset from main monitor
 while true; do
@@ -91,10 +98,14 @@ while true; do
         echo "[ERROR-2] $(date): ping-dockerfile.onrender.com"
     
     sleep 15
-done' > /home/appuser/monitor2.sh && chmod +x /home/appuser/monitor2.sh
+done
+EOF
 
-# Script 4: Webhook alert system (extensible for notifications)
-RUN echo '#!/bin/bash
+RUN chmod +x /home/appuser/monitor2.sh
+
+# Script 4: Webhook alert system
+COPY <<'EOF' /home/appuser/alerts.sh
+#!/bin/bash
 echo "=== Alert System Started ==="
 ERROR_COUNT=0
 while true; do
@@ -107,19 +118,27 @@ while true; do
     fi
     
     sleep 60
-done' > /home/appuser/alerts.sh && chmod +x /home/appuser/alerts.sh
+done
+EOF
 
-# Script 5: Health endpoint server (for external monitoring)
-RUN echo '#!/bin/bash
-echo "=== Health Server Started on port ${PORT:-8080} ==="
-HEALTH_PORT=${PORT:-8080}
+RUN chmod +x /home/appuser/alerts.sh
+
+# Script 5: Health endpoint server
+COPY <<'EOF' /home/appuser/health.sh
+#!/bin/bash
+echo "=== Health Server Started on port \${PORT:-8080} ==="
+HEALTH_PORT=\${PORT:-8080}
 while true; do
-    echo -e "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"running\",\"timestamp\":\"$(date)\"}" |
-    nc -l -p "$HEALTH_PORT" -q 1 -s 0.0.0.0
-done' > /home/appuser/health.sh && chmod +x /home/appuser/health.sh
+    echo -e "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"running\",\"timestamp\":\"\$(date)\"}" |
+    nc -l -p "\$HEALTH_PORT" -q 1 -s 0.0.0.0
+done
+EOF
 
-# Create Python monitor as a separate file to avoid quote issues
-RUN echo 'import requests
+RUN chmod +x /home/appuser/health.sh
+
+# Python monitor script
+COPY <<'EOF' /home/appuser/monitor.py
+import requests
 import time
 import sys
 from datetime import datetime
@@ -186,25 +205,34 @@ def main():
             time.sleep(5)
 
 if __name__ == "__main__":
-    main()' > /home/appuser/monitor.py
+    main()
+EOF
 
-# Create cron job for additional pings
-RUN echo '#!/bin/bash
+# Cron ping script
+COPY <<'EOF' /home/appuser/cron-ping.sh
+#!/bin/bash
 # Run every 5 minutes via cron
 echo "[CRON] $(date): Running scheduled ping"
 curl -s --max-time 10 "https://ping-dockerfile.onrender.com" >/dev/null 2>&1
 curl -s --max-time 5 "https://api.ipify.org" >/dev/null 2>&1
-echo "[CRON] $(date): Scheduled ping complete"' > /home/appuser/cron-ping.sh && chmod +x /home/appuser/cron-ping.sh
+echo "[CRON] $(date): Scheduled ping complete"
+EOF
+
+RUN chmod +x /home/appuser/cron-ping.sh
 
 # Setup crontab
-RUN echo '*/5 * * * * /home/appuser/cron-ping.sh >> /home/appuser/cron.log 2>&1
-* * * * * echo "[HEARTBEAT] $(date): Still alive" >> /home/appuser/heartbeat.log' > /tmp/crontab.txt && \
+RUN echo '*/5 * * * * /home/appuser/cron-ping.sh >> /home/appuser/cron.log 2>&1' > /tmp/crontab.txt && \
+    echo '* * * * * echo "[HEARTBEAT] $(date): Still alive" >> /home/appuser/heartbeat.log' >> /tmp/crontab.txt && \
     crontab /tmp/crontab.txt
 
-# Main startup script that runs everything
-RUN echo '#!/bin/bash
-# Redirect all output to log file
-exec > /home/appuser/monitor.log 2>&1
+# Main startup script
+COPY <<'EOF' /home/appuser/start.sh
+#!/bin/bash
+# Create log files
+touch /home/appuser/monitor.log
+touch /home/appuser/python.log
+touch /home/appuser/cron.log
+touch /home/appuser/heartbeat.log
 
 echo "======================================="
 echo "ULTIMATE 24/7 MONITOR STARTING"
@@ -214,19 +242,19 @@ echo "======================================="
 
 # Start all services in background
 echo "Starting Health Server..."
-/home/appuser/health.sh &
+/home/appuser/health.sh >> /home/appuser/health.log 2>&1 &
 
 echo "Starting Main Monitor..."
-/home/appuser/monitor1.sh &
+/home/appuser/monitor1.sh >> /home/appuser/monitor.log 2>&1 &
 
 echo "Starting Self-Pinger..."
-/home/appuser/pinger.sh &
+/home/appuser/pinger.sh >> /home/appuser/pinger.log 2>&1 &
 
 echo "Starting Backup Monitor..."
-/home/appuser/monitor2.sh &
+/home/appuser/monitor2.sh >> /home/appuser/monitor2.log 2>&1 &
 
 echo "Starting Alert System..."
-/home/appuser/alerts.sh &
+/home/appuser/alerts.sh >> /home/appuser/alerts.log 2>&1 &
 
 echo "Starting Python Monitor..."
 python3 /home/appuser/monitor.py >> /home/appuser/python.log 2>&1 &
@@ -235,11 +263,19 @@ echo "Starting Cron Service..."
 sudo service cron start
 
 echo "All systems started! Monitoring 24/7..."
-echo "Log file: /home/appuser/monitor.log"
 echo "======================================="
 
-# Keep container running and show tail of logs
-tail -f /home/appuser/monitor.log /home/appuser/python.log' > /home/appuser/start.sh && chmod +x /home/appuser/start.sh
+# Keep container running and show logs
+tail -f /home/appuser/monitor.log /home/appuser/python.log /home/appuser/heartbeat.log
+EOF
+
+RUN chmod +x /home/appuser/start.sh
+
+# Install cron as root user
+USER root
+RUN apt-get update && apt-get install -y cron && apt-get clean
+RUN service cron start
+USER appuser
 
 # Run the ultimate startup script
 CMD ["/home/appuser/start.sh"]
