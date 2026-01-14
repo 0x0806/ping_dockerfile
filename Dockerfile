@@ -1,142 +1,78 @@
 FROM ubuntu:22.04
 
-# Set environment variables to avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
-ENV RENDER_URL="https://ping-dockerfile.onrender.com"
 
-# Install advanced dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     tzdata \
-    netcat-openbsd \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user for security
-RUN useradd -m -u 1000 appuser
-WORKDIR /home/appuser
+# Create a simple but effective 24/7 monitor
+RUN echo '#!/bin/bash
+echo "=== 24/7 Website Monitor Starting ==="
+echo "Checking 4 endpoints every 15 seconds"
+echo "Self-pinging to stay awake on Render"
+echo ""
 
-# Create all scripts as root first, then change ownership
-COPY <<'EOF' /home/appuser/monitor1.sh
-#!/bin/bash
-echo "=== Main Monitor Started ==="
 while true; do
     START_TIME=$(date +%s)
+    echo "=== Cycle started at $(date) ==="
+    
+    # 1. thriiievents.com
+    if curl -Is --max-time 10 https://thriiievents.com >/dev/null 2>&1; then
+        echo "✓ $(date): thriiievents.com"
+    else
+        echo "✗ $(date): thriiievents.com"
+    fi
+    
+    # 2. securechat.online
+    if curl -Is --max-time 10 https://www.securechat.online >/dev/null 2>&1; then
+        echo "✓ $(date): securechat.online"
+    else
+        echo "✗ $(date): securechat.online"
+    fi
+    
+    # 3. ping-dockerfile.onrender.com
+    if curl -Is --max-time 10 https://ping-dockerfile.onrender.com >/dev/null 2>&1; then
+        echo "✓ $(date): ping-dockerfile.onrender.com"
+    else
+        echo "✗ $(date): ping-dockerfile.onrender.com"
+    fi
+    
+    # 4. Socket.IO endpoint (with timestamp)
     TIMESTAMP=$(date +%s%N | cut -b1-13)
-    
-    # Check 1: thriiievents.com
-    curl -Is --max-time 10 https://thriiievents.com >/dev/null 2>&1 &&
-        echo "[OK-1] $(date): thriiievents.com" ||
-        echo "[ERROR-1] $(date): thriiievents.com"
-    
-    # Check 2: securechat.online
-    curl -Is --max-time 10 https://www.securechat.online >/dev/null 2>&1 &&
-        echo "[OK-1] $(date): securechat.online" ||
-        echo "[ERROR-1] $(date): securechat.online"
-    
-    # Check 3: ping-dockerfile.onrender.com
-    curl -Is --max-time 10 https://ping-dockerfile.onrender.com >/dev/null 2>&1 &&
-        echo "[OK-1] $(date): ping-dockerfile.onrender.com" ||
-        echo "[ERROR-1] $(date): ping-dockerfile.onrender.com"
-    
-    # Check 4: Socket.IO endpoint
-    curl -Is --max-time 10 "https://securechat.online/socket.io/?EIO=4&transport=polling&t=w3n1gh6z$TIMESTAMP" \
+    if curl -Is --max-time 10 "https://securechat.online/socket.io/?EIO=4&transport=polling&t=w3n1gh6z$TIMESTAMP" \
         -H "Host: securechat.online" \
-        -H "User-Agent: Mozilla/5.0" \
-        -H "Accept: */*" >/dev/null 2>&1 &&
-        echo "[OK-1] $(date): Socket.IO" ||
-        echo "[ERROR-1] $(date): Socket.IO"
+        -H "User-Agent: Monitor/1.0" \
+        -H "Accept: */*" >/dev/null 2>&1; then
+        echo "✓ $(date): Socket.IO endpoint"
+    else
+        echo "✗ $(date): Socket.IO endpoint"
+    fi
     
-    ELAPSED=$(( $(date +%s) - START_TIME ))
-    [ $ELAPSED -lt 15 ] && sleep $((15 - ELAPSED))
-done
-EOF
-
-COPY <<'EOF' /home/appuser/pinger.sh
-#!/bin/bash
-echo "=== Self-Pinger Started ==="
-while true; do
-    # Ping our own Render URL every 30 seconds
-    echo "[SELF-PING] $(date): Pinging $RENDER_URL"
-    curl -s --max-time 10 "$RENDER_URL" >/dev/null 2>&1 || true
+    # Calculate time taken and adjust sleep
+    END_TIME=$(date +%s)
+    ELAPSED=$((END_TIME - START_TIME))
     
-    # Also ping via different methods for redundancy
-    curl -s --max-time 5 "https://httpbin.org/get" >/dev/null 2>&1 || true
+    # Ensure we ping ourselves to stay awake
+    echo "=== Self-ping to prevent sleep ==="
+    curl -s --max-time 5 "https://ping-dockerfile.onrender.com" >/dev/null 2>&1 || echo "Self-ping failed (normal if just starting)"
     curl -s --max-time 5 "https://google.com" >/dev/null 2>&1 || true
     
-    echo "[SELF-PING] $(date): Completed"
-    sleep 30
-done
-EOF
-
-COPY <<'EOF' /home/appuser/monitor2.sh
-#!/bin/bash
-echo "=== Backup Monitor Started ==="
-sleep 7  # Offset from main monitor
-while true; do
-    # Check all endpoints with different timeout
-    curl -Is --max-time 8 https://thriiievents.com >/dev/null 2>&1 &&
-        echo "[OK-2] $(date): thriiievents.com" ||
-        echo "[ERROR-2] $(date): thriiievents.com"
+    # Sleep to make total cycle 15 seconds
+    if [ $ELAPSED -lt 15 ]; then
+        SLEEP_TIME=$((15 - ELAPSED))
+        echo "Cycle took ${ELAPSED}s, sleeping ${SLEEP_TIME}s"
+        sleep $SLEEP_TIME
+    else
+        echo "Cycle took ${ELAPSED}s (long), continuing immediately"
+    fi
     
-    curl -Is --max-time 8 https://ping-dockerfile.onrender.com >/dev/null 2>&1 &&
-        echo "[OK-2] $(date): ping-dockerfile.onrender.com" ||
-        echo "[ERROR-2] $(date): ping-dockerfile.onrender.com"
-    
-    sleep 15
-done
-EOF
+    echo ""
+done' > /monitor.sh && chmod +x /monitor.sh
 
-COPY <<'EOF' /home/appuser/health.sh
-#!/bin/bash
-echo "=== Health Server Started on port \${PORT:-8080} ==="
-HEALTH_PORT=\${PORT:-8080}
-while true; do
-    echo -e "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"running\",\"timestamp\":\"\$(date)\"}" |
-    nc -l -p "\$HEALTH_PORT" -q 1 -s 0.0.0.0
-done
-EOF
-
-# Main startup script
-COPY <<'EOF' /home/appuser/start.sh
-#!/bin/bash
-echo "======================================="
-echo "ULTIMATE 24/7 MONITOR STARTING"
-echo "Start Time: $(date)"
-echo "Render URL: $RENDER_URL"
-echo "======================================="
-
-# Start all services in background
-echo "Starting Health Server..."
-/home/appuser/health.sh &
-
-echo "Starting Main Monitor..."
-/home/appuser/monitor1.sh &
-
-echo "Starting Self-Pinger..."
-/home/appuser/pinger.sh &
-
-echo "Starting Backup Monitor..."
-/home/appuser/monitor2.sh &
-
-echo "All systems started! Monitoring 24/7..."
-echo "======================================="
-
-# Keep container running
-while true; do
-    echo "[HEARTBEAT] $(date): Monitor is running"
-    sleep 60
-done
-EOF
-
-# Set permissions and ownership
-RUN chmod +x /home/appuser/*.sh && chown -R appuser:appuser /home/appuser
-
-# Switch to non-root user
-USER appuser
-
-# Run the startup script
-CMD ["/home/appuser/start.sh"]
+CMD ["/monitor.sh"]
