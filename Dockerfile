@@ -12,19 +12,14 @@ RUN apt-get update && \
     ca-certificates \
     tzdata \
     netcat-openbsd \
-    cron \
-    python3 \
-    python3-pip \
-    && pip3 install requests \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user for security
 RUN useradd -m -u 1000 appuser
-USER appuser
 WORKDIR /home/appuser
 
-# Script 1: Main website monitoring
+# Create all scripts as root first, then change ownership
 COPY <<'EOF' /home/appuser/monitor1.sh
 #!/bin/bash
 echo "=== Main Monitor Started ==="
@@ -60,9 +55,6 @@ while true; do
 done
 EOF
 
-RUN chmod +x /home/appuser/monitor1.sh
-
-# Script 2: Continuous self-pinging to keep Render alive
 COPY <<'EOF' /home/appuser/pinger.sh
 #!/bin/bash
 echo "=== Self-Pinger Started ==="
@@ -80,9 +72,6 @@ while true; do
 done
 EOF
 
-RUN chmod +x /home/appuser/pinger.sh
-
-# Script 3: Backup monitor with different timing
 COPY <<'EOF' /home/appuser/monitor2.sh
 #!/bin/bash
 echo "=== Backup Monitor Started ==="
@@ -101,29 +90,6 @@ while true; do
 done
 EOF
 
-RUN chmod +x /home/appuser/monitor2.sh
-
-# Script 4: Webhook alert system
-COPY <<'EOF' /home/appuser/alerts.sh
-#!/bin/bash
-echo "=== Alert System Started ==="
-ERROR_COUNT=0
-while true; do
-    # Monitor log file for errors
-    ERRORS=$(tail -100 /home/appuser/monitor.log 2>/dev/null | grep -c "ERROR")
-    
-    if [ $ERRORS -gt $ERROR_COUNT ]; then
-        echo "[ALERT] $(date): Detected new errors! Total: $ERRORS"
-        ERROR_COUNT=$ERRORS
-    fi
-    
-    sleep 60
-done
-EOF
-
-RUN chmod +x /home/appuser/alerts.sh
-
-# Script 5: Health endpoint server
 COPY <<'EOF' /home/appuser/health.sh
 #!/bin/bash
 echo "=== Health Server Started on port \${PORT:-8080} ==="
@@ -134,106 +100,9 @@ while true; do
 done
 EOF
 
-RUN chmod +x /home/appuser/health.sh
-
-# Python monitor script
-COPY <<'EOF' /home/appuser/monitor.py
-import requests
-import time
-import sys
-from datetime import datetime
-
-URLS = [
-    "https://thriiievents.com",
-    "https://www.securechat.online",
-    "https://ping-dockerfile.onrender.com"
-]
-
-SOCKET_IO_HEADERS = {
-    "Host": "securechat.online",
-    "Sec-Ch-Ua-Platform": "Windows",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept": "*/*",
-    "Sec-Ch-Ua": '"Chromium";v="143", "Not A(Brand";v="24"',
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Dest": "empty",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Priority": "u=1, i"
-}
-
-def check_url(url, headers=None):
-    try:
-        if headers:
-            response = requests.head(url, headers=headers, timeout=10)
-        else:
-            response = requests.head(url, timeout=10)
-        return response.status_code < 500
-    except:
-        return False
-
-def main():
-    print(f"[PY-MONITOR] Started at {datetime.now()}")
-    
-    while True:
-        try:
-            timestamp = int(time.time() * 1000)
-            
-            # Check regular URLs
-            for url in URLS:
-                status = check_url(url)
-                print(f"[PY-{'OK' if status else 'ERROR'}] {datetime.now()}: {url}")
-            
-            # Check Socket.IO
-            socket_url = f"https://securechat.online/socket.io/?EIO=4&transport=polling&t=w3n1gh6z{timestamp}"
-            socket_status = check_url(socket_url, SOCKET_IO_HEADERS)
-            print(f"[PY-{'OK' if socket_status else 'ERROR'}] {datetime.now()}: Socket.IO")
-            
-            # Self-ping to keep alive
-            try:
-                requests.get("https://ping-dockerfile.onrender.com", timeout=5)
-                print(f"[PY-SELFPING] {datetime.now()}: Self-ping successful")
-            except:
-                pass
-            
-            time.sleep(20)
-            
-        except Exception as e:
-            print(f"[PY-ERROR] {datetime.now()}: {e}")
-            time.sleep(5)
-
-if __name__ == "__main__":
-    main()
-EOF
-
-# Cron ping script
-COPY <<'EOF' /home/appuser/cron-ping.sh
-#!/bin/bash
-# Run every 5 minutes via cron
-echo "[CRON] $(date): Running scheduled ping"
-curl -s --max-time 10 "https://ping-dockerfile.onrender.com" >/dev/null 2>&1
-curl -s --max-time 5 "https://api.ipify.org" >/dev/null 2>&1
-echo "[CRON] $(date): Scheduled ping complete"
-EOF
-
-RUN chmod +x /home/appuser/cron-ping.sh
-
-# Setup crontab
-RUN echo '*/5 * * * * /home/appuser/cron-ping.sh >> /home/appuser/cron.log 2>&1' > /tmp/crontab.txt && \
-    echo '* * * * * echo "[HEARTBEAT] $(date): Still alive" >> /home/appuser/heartbeat.log' >> /tmp/crontab.txt && \
-    crontab /tmp/crontab.txt
-
 # Main startup script
 COPY <<'EOF' /home/appuser/start.sh
 #!/bin/bash
-# Create log files
-touch /home/appuser/monitor.log
-touch /home/appuser/python.log
-touch /home/appuser/cron.log
-touch /home/appuser/heartbeat.log
-
 echo "======================================="
 echo "ULTIMATE 24/7 MONITOR STARTING"
 echo "Start Time: $(date)"
@@ -242,40 +111,32 @@ echo "======================================="
 
 # Start all services in background
 echo "Starting Health Server..."
-/home/appuser/health.sh >> /home/appuser/health.log 2>&1 &
+/home/appuser/health.sh &
 
 echo "Starting Main Monitor..."
-/home/appuser/monitor1.sh >> /home/appuser/monitor.log 2>&1 &
+/home/appuser/monitor1.sh &
 
 echo "Starting Self-Pinger..."
-/home/appuser/pinger.sh >> /home/appuser/pinger.log 2>&1 &
+/home/appuser/pinger.sh &
 
 echo "Starting Backup Monitor..."
-/home/appuser/monitor2.sh >> /home/appuser/monitor2.log 2>&1 &
-
-echo "Starting Alert System..."
-/home/appuser/alerts.sh >> /home/appuser/alerts.log 2>&1 &
-
-echo "Starting Python Monitor..."
-python3 /home/appuser/monitor.py >> /home/appuser/python.log 2>&1 &
-
-echo "Starting Cron Service..."
-sudo service cron start
+/home/appuser/monitor2.sh &
 
 echo "All systems started! Monitoring 24/7..."
 echo "======================================="
 
-# Keep container running and show logs
-tail -f /home/appuser/monitor.log /home/appuser/python.log /home/appuser/heartbeat.log
+# Keep container running
+while true; do
+    echo "[HEARTBEAT] $(date): Monitor is running"
+    sleep 60
+done
 EOF
 
-RUN chmod +x /home/appuser/start.sh
+# Set permissions and ownership
+RUN chmod +x /home/appuser/*.sh && chown -R appuser:appuser /home/appuser
 
-# Install cron as root user
-USER root
-RUN apt-get update && apt-get install -y cron && apt-get clean
-RUN service cron start
+# Switch to non-root user
 USER appuser
 
-# Run the ultimate startup script
+# Run the startup script
 CMD ["/home/appuser/start.sh"]
