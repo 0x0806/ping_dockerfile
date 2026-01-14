@@ -19,7 +19,7 @@ RUN useradd -m -u 1000 appuser
 USER appuser
 WORKDIR /home/appuser
 
-# Create the monitoring script
+# Create the monitoring script with 15-second interval
 RUN echo '#!/bin/bash\n\
 # Start a minimal HTTP server on $PORT (if set) in the background\n\
 if [ -n "$PORT" ]; then\n\
@@ -29,26 +29,40 @@ if [ -n "$PORT" ]; then\n\
     done &\n\
 fi\n\
 \n\
-echo "=== Website Monitoring Started ==="\n\
+echo "=== Website Monitoring Started (15-second intervals) ==="\n\
 \n\
 while true; do\n\
+    START_TIME=$(date +%s)\n\
     echo "Checking websites at $(date)"\n\
     \n\
+    # Check first website\n\
     if ! curl -Is --max-time 10 https://thriiievents.com >/dev/null 2>&1; then\n\
         echo "[ERROR] $(date): thriiievents.com is DOWN"\n\
     else\n\
         echo "[OK] $(date): thriiievents.com is UP"\n\
     fi\n\
     \n\
+    # Check second website\n\
     if ! curl -Is --max-time 10 https://www.securechat.online >/dev/null 2>&1; then\n\
         echo "[ERROR] $(date): securechat.online is DOWN"\n\
     else\n\
         echo "[OK] $(date): securechat.online is UP"\n\
     fi\n\
     \n\
-    echo "Waiting 49 seconds..."\n\
-    echo "----------------------------------------"\n\
-    sleep 49\n\
+    END_TIME=$(date +%s)\n\
+    ELAPSED=$((END_TIME - START_TIME))\n\
+    \n\
+    # Calculate remaining sleep time (ensure total cycle is 15 seconds)\n\
+    if [ $ELAPSED -lt 15 ]; then\n\
+        SLEEP_TIME=$((15 - ELAPSED))\n\
+        echo "Check completed in ${ELAPSED}s. Sleeping for ${SLEEP_TIME}s..."\n\
+        echo "----------------------------------------"\n\
+        sleep $SLEEP_TIME\n\
+    else\n\
+        echo "Check took ${ELAPSED}s (longer than 15s interval)"\n\
+        echo "----------------------------------------"\n\
+        # If check took longer than 15s, continue immediately\n\
+    fi\n\
 done' > /home/appuser/checker.sh && \
     chmod +x /home/appuser/checker.sh
 
