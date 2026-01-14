@@ -25,7 +25,7 @@ RUN echo '#!/bin/bash\n\
 if [ -n "$PORT" ]; then\n\
     echo "Starting health check server on port $PORT..."\n\
     while true; do\n\
-        echo -e "HTTP/1.1 200 OK\\r\\n\\r\\nI'\''m a background worker. Monitor is running." | nc -l -p $PORT -q 1\n\
+        echo -e "HTTP/1.1 200 OK\\r\\n\\r\\nI'\''m a background worker. Monitor is running." | nc -l -p "$PORT" -q 1\n\
     done &\n\
 fi\n\
 \n\
