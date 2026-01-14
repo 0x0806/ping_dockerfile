@@ -4,7 +4,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 
-# Install dependencies (Added 'netcat-openbsd' for the HTTP server)
+# Install dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
@@ -31,22 +31,49 @@ fi\n\
 \n\
 echo "=== Website Monitoring Started (15-second intervals) ==="\n\
 \n\
+# Generate a unique timestamp for Socket.IO polling parameter\n\
+generate_timestamp() {\n\
+    echo "w3n1gh6z$(date +%s%N | cut -b1-13)"\n\
+}\n\
+\n\
 while true; do\n\
     START_TIME=$(date +%s)\n\
     echo "Checking websites at $(date)"\n\
     \n\
-    # Check first website\n\
+    # Check first website - thriiievents.com\n\
     if ! curl -Is --max-time 10 https://thriiievents.com >/dev/null 2>&1; then\n\
         echo "[ERROR] $(date): thriiievents.com is DOWN"\n\
     else\n\
         echo "[OK] $(date): thriiievents.com is UP"\n\
     fi\n\
     \n\
-    # Check second website\n\
+    # Check second website - securechat.online main site\n\
     if ! curl -Is --max-time 10 https://www.securechat.online >/dev/null 2>&1; then\n\
-        echo "[ERROR] $(date): securechat.online is DOWN"\n\
+        echo "[ERROR] $(date): securechat.online (main site) is DOWN"\n\
     else\n\
-        echo "[OK] $(date): securechat.online is UP"\n\
+        echo "[OK] $(date): securechat.online (main site) is UP"\n\
+    fi\n\
+    \n\
+    # Check Socket.IO polling endpoint with all required headers\n\
+    TIMESTAMP=$(generate_timestamp)\n\
+    SOCKET_IO_URL="https://securechat.online/socket.io/?EIO=4&transport=polling&t=$TIMESTAMP"\n\
+    \n\
+    if ! curl -Is --max-time 10 "$SOCKET_IO_URL" \\\n\
+        -H "Host: securechat.online" \\\n\
+        -H "Sec-Ch-Ua-Platform: \"Windows\"" \\\n\
+        -H "Accept-Language: en-US,en;q=0.9" \\\n\
+        -H "Accept: */*" \\\n\
+        -H "Sec-Ch-Ua: \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"" \\\n\
+        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36" \\\n\
+        -H "Sec-Ch-Ua-Mobile: ?0" \\\n\
+        -H "Sec-Fetch-Site: same-origin" \\\n\
+        -H "Sec-Fetch-Mode: cors" \\\n\
+        -H "Sec-Fetch-Dest: empty" \\\n\
+        -H "Accept-Encoding: gzip, deflate, br" \\\n\
+        -H "Priority: u=1, i" >/dev/null 2>&1; then\n\
+        echo "[ERROR] $(date): securechat.online Socket.IO endpoint is DOWN"\n\
+    else\n\
+        echo "[OK] $(date): securechat.online Socket.IO endpoint is UP"\n\
     fi\n\
     \n\
     END_TIME=$(date +%s)\n\
